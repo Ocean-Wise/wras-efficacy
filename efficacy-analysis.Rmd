@@ -1,0 +1,208 @@
+---
+title: "WRAS Efficacy Analysis"
+author: "Alex Mitchell"
+date: "2023-05-15"
+output: 
+  rmdformats::downcute:
+    downcute_theme: "chaos"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#### No QA has been done. 
+
+# Introduction
+
+The Whale Report Alert System, running since 2018, has not been empirically tested to assess the effectiveness of the tool. In order to assess our own tool, push for further funding, and show the effectiveness to international partners we need to have evidence of its success.
+
+Therefore the aims of the project are to...
+* Use survey data to understand more about mariners behavior when using the WRAS from their perspective
+* Use AIS and WRAS alert data to test how often a vessel changes speed or direction due to a WRAS alert
+
+## Data
+### Ocean Wise
+* WRAS Alert data
+  + This comes from an extract of the database from Lapis. It contains information on all users who recieved an alert from a sighting.
+  + This does not include operations center staff/desktop application users.
+
+* WRAS User data
+  + Some users should not be included in the analysis, for example Ocean Wise staff. We can use this to filter out users we want to ignore.
+
+* Vessel data
+  + Contains information on all the vessels logged through the WRAS alerts data.
+  + Very messy, containing a lot of user error in entering data.
+  + I have spent hours on MarineTraffic identifying vessels and additional information.
+  + We need to join the vessel data with the WRAS data as we will use the MMSI number of the vessel to enable us to use WRAS alert data with the AIS data.
+  
+### Vessel position data
+* AIS
+  + Extract from Ocean Networks Canada (ONC - Kiyomi Holman).
+  + Already pre-processed by ONC.
+
+### Survey data
+* Microsoft form sent out by Ocean Wise to WRAS users.
+  + TBD
+  
+
+# Data Cleaning
+
+```{r echo = F}
+library(magrittr)
+
+## Edit this if you're running on your own Ocean Wise machine. 
+user = "AlexMitchell"
+```
+
+In this section, we will perform data cleaning tasks to prepare the dataset for analysis. Describe the steps taken to clean the data, such as handling missing values, removing duplicates, correcting inconsistent values, or transforming variables.
+
+## Load Data
+
+### WRAS Alert Data
+```{r  warning = F, message = F}
+alerts = readxl::read_xlsx(paste0("C:/Users/",
+                                             user,
+                                             "/Ocean Wise Conservation Association/Whales Initiative - General/OceanWise Data/WRAS/WRAS_main.xlsx")) %>% 
+  janitor::clean_names()
+```
+
+### WRAS Users
+```{r warning = F, message = F}
+users = readxl::read_xlsx(paste0("C:/Users/",
+                                       user,
+                                       "/Ocean Wise Conservation Association/Whales Initiative - General/BCCSN.Groups/WhaleReport Alert System/Participants/WRASUSERS_main.xlsx"), sheet = "Authorized") %>% 
+  janitor::clean_names()
+```
+
+### Vessel data
+
+```{r warning = F, message = F}
+vessels = readxl::read_xlsx(paste0("C:/Users/",
+                                             user,
+                                             "/Ocean Wise Conservation Association/Whales Initiative - General/OceanWise Data/WRAS/Vessels_main.xlsx")) %>% 
+  janitor::clean_names()
+
+```
+
+
+## Data Cleaning Tasks
+
+Perform specific data cleaning tasks, such as handling missing values, removing duplicates, correcting inconsistent values, or transforming variables. Provide code examples and explanations for each task.
+
+### Users
+
+* Relatively simple cleaning by removing special characters from all columns barring emails.
+* The `include_in_efficacy_analysis` filter removes Ocean Wise staff from the analysis.
+
+```{r warning = F, message = F}
+users_clean = users %>% 
+  dplyr::mutate(dplyr::across(!email, fedmatch::clean_strings)) %>%  ## cleans strings to remove special characters and formatting (all cols but email)
+  dplyr::filter(include_in_efficacy_analysis == "yes")
+```
+
+
+### Vessels
+ 
+* Splitting the `loa` and `be` column to create a length and breadth columns and extracting the numbers from those columns to remove odd characters.
+* I added a `Key2` column in here which is just a row number, this is needed for the `fuzzy_matching` later on.
+* Removing the "mv" and "m v" parts of strings as they appear 
+
+```{r warning = F, message = F}
+vessels_clean = vessels %>%
+  dplyr::mutate(dplyr::across(!loa_x_be, fedmatch::clean_strings)) %>%
+  tidyr::separate(loa_x_be, c("loa", "be"),sep = "x") %>%  ## split loa x be column to two seperate columns
+  dplyr::mutate(dplyr::across(c(loa, be), readr::parse_number)) %>%  ## extract numerics from the new columns
+  dplyr::mutate(key2 = 1:nrow(.)) %>% 
+  dplyr::mutate(vessel_name = stringr::str_remove_all(vessel_name, "mv |m v ")) %>% 
+  dplyr::select(vessel_name, mmsi, imo, class, loa, be, notes, key2)
+
+```
+
+
+### Alerts
+
+* Clean strings to remove special characters
+* Filter out the Ocean Wise vessels
+* Again, create a key for the fuzzy matching that happens shortly
+* Remove acronyms before vessel names due to them only partially being used
+* We need to adjust some of the names of vessels as the fuzzy matching can't handle the miss-spellings. This is a manual process and will need to be updated when we get more WRAS alerts. 
+
+```{r warning = F, message = F}
+alerts_clean = alerts %>% 
+  dplyr::select(c("alert_sent",
+                  # "sighted_at",
+                  "latitude", 
+                  "longitude", 
+                  "skipper", 
+                  "vessel", 
+                  "species")) %>% 
+  # dplyr::filter(lubridate::year(alert_sent) == 2021 | lubridate::year(alert_sent) == 2020) %>%
+  dplyr::mutate(dplyr::across(!longitude & !latitude & !alert_sent, fedmatch::clean_strings)) %>%  ## cleans strings to remove special characters and formatting
+  dplyr::filter(!vessel %in% c("skana", "kellahan","tsitika","no vessel", 
+                               "pilot underway")) %>% 
+  ## Assigns a unique key to the data set for the fuzzy matching later
+  dplyr::mutate(key1 = 1:nrow(.)) %>% 
+  dplyr::mutate(vessel = stringr::str_remove_all(vessel, "mv |m v ")) %>% 
+  ## The next mutates clean up some of the common spelling errors and bits the fuzzy matching misses. Repeated for vessel data.
+  dplyr::mutate(vessel = dplyr::case_when(vessel == "charles hays amwaal" ~ "charles hays",
+                                          vessel == "amwaal" ~ "charles hays",
+                                          vessel == "cowichan" ~ "queen of cowichan",
+                                          vessel == "sobc" ~ "spirit of british columbia",
+                                          vessel == "qalb" ~ "queen of alberni",
+                                          vessel == "spirit of bc" ~ "spirit of british columbia",
+                                          vessel == "reliant" ~ "seaspan reliant",
+                                          vessel == "queen of newwest" ~ "queen of new westminster",
+                                          vessel == "q of alberni" ~ "queen of alberni",
+                                          vessel == "mazuru bishamon" ~ "maizuru bishamon",
+                                          vessel == "coastal renn" ~ "coastal renaissance",
+                                          vessel == "sovc" ~ "spirit of vancouver island",
+                                          vessel == "q of alberni" ~ "queen of alberni",
+                                          vessel == "qnw" ~ "queen of new westminster",
+                                          vessel == "laurier" ~ "sir wilfrid laurier",
+                                          vessel == "suquamish" ~ "wsf suquamish",
+                                          vessel == "howe sounbd queen" ~ "howe sound queen",
+                                          vessel == "inspiration" ~ "coastal inspiration",
+                                          vessel == "suquwamish" ~ "wsf suquamish",
+                                          vessel == "seapan zambizi" ~ "seaspan zambezi",
+                                          vessel == "sprit of british columbia" ~ "spirit of british columbia",
+                                          vessel == "roald almundsen" ~ "roald amundsen",
+                                          vessel == "ovean clio" ~ "ocean clio",
+                                          vessel == "coroleader ol" ~ "coreleader ol",
+                                          vessel == "zuidetdam" ~ "zuiderdam",
+                                          vessel == "seaspan anadonis" ~ "seaspan adonis",
+                                          vessel == "berge yotie" ~ "berge yotei",
+                                          vessel == "carnval splendor" ~ "carnival splendor",
+                                          vessel == "blackball" ~ "coho",
+                                          vessel == "zeta" ~ "star zeta",
+                                          vessel == "cma cgm rigalito" ~ "cma cgm rigoletto",
+                                          vessel == "gulf islands spirit" ~ "spirit of vancouver island",
+                                          vessel == "zeda" ~ "star zeta",
+                                          vessel == "zeta" ~ "star zeta",
+                                          TRUE ~ vessel))
+
+```
+
+
+
+# Data Processing
+
+In this section, we will process the cleaned data to extract relevant information, create new variables, or derive insights. Describe the steps involved in data processing and any transformations or calculations performed.
+
+## Variable Selection
+
+
+## Data Transformation
+
+
+
+# Conclusion
+
+Summarize the main findings and insights from your data analysis. Discuss how your results address the research questions or goals outlined in the introduction. Also, mention any limitations or areas for further exploration.
+
+---
+
+This is a basic template to get you started with your analytical project in R Markdown. Feel free to customize it further based on your specific project requirements and analysis needs.
+
+Happy analyzing!
