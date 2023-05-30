@@ -181,5 +181,5 @@ leaflet::leaflet() %>%
 
   
 
-slowdown2022 <- ?raster::union(slowdown2022_, slowdown2022_haro)
+slowdown2022 <- raster::union(slowdown2022_, slowdown2022_haro)
   
