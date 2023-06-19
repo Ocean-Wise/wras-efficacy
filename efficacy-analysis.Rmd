@@ -25,7 +25,7 @@ Therefore the aims of the project are to...
 ## Data
 ### Ocean Wise
 * WRAS Alert data
-  + This comes from an extract of the database from Lapis. It contains information on all users who recieved an alert from a sighting.
+  + This comes from an extract of the database from Lapis. It contains information on all users who received an alert from a sighting.
   + This does not include operations center staff/desktop application users.
 
 * WRAS User data
@@ -46,7 +46,6 @@ Therefore the aims of the project are to...
 * Microsoft form sent out by Ocean Wise to WRAS users.
   + TBD
   
-
 # Data Cleaning
 
 ```{r echo = F}
@@ -61,6 +60,7 @@ In this section, we will perform data cleaning tasks to prepare the dataset for 
 ## Load Data
 
 ### WRAS Alert Data
+
 ```{r  warning = F, message = F}
 alerts = readxl::read_xlsx(paste0("C:/Users/",
                                              user,
@@ -69,6 +69,7 @@ alerts = readxl::read_xlsx(paste0("C:/Users/",
 ```
 
 ### WRAS Users
+
 ```{r warning = F, message = F}
 users = readxl::read_xlsx(paste0("C:/Users/",
                                        user,
@@ -99,7 +100,9 @@ Perform specific data cleaning tasks, such as handling missing values, removing 
 ```{r warning = F, message = F}
 users_clean = users %>% 
   dplyr::mutate(dplyr::across(!email, fedmatch::clean_strings)) %>%  ## cleans strings to remove special characters and formatting (all cols but email)
-  dplyr::filter(include_in_efficacy_analysis == "yes")
+  dplyr::mutate(name = paste(first_name, last_name)) %>% 
+  dplyr::select(name, organization, org_type, email, region_clean, include_in_efficacy_analysis)
+  
 ```
 
 
@@ -117,7 +120,6 @@ vessels_clean = vessels %>%
   dplyr::mutate(key2 = 1:nrow(.)) %>% 
   dplyr::mutate(vessel_name = stringr::str_remove_all(vessel_name, "mv |m v ")) %>% 
   dplyr::select(vessel_name, mmsi, imo, class, loa, be, notes, key2)
-
 ```
 
 
@@ -141,7 +143,9 @@ alerts_clean = alerts %>%
   # dplyr::filter(lubridate::year(alert_sent) == 2021 | lubridate::year(alert_sent) == 2020) %>%
   dplyr::mutate(dplyr::across(!longitude & !latitude & !alert_sent, fedmatch::clean_strings)) %>%  ## cleans strings to remove special characters and formatting
   dplyr::filter(!vessel %in% c("skana", "kellahan","tsitika","no vessel", 
-                               "pilot underway")) %>% 
+                               "land",
+                               "on land",
+                               "pilot underway")) %>%
   ## Assigns a unique key to the data set for the fuzzy matching later
   dplyr::mutate(key1 = 1:nrow(.)) %>% 
   dplyr::mutate(vessel = stringr::str_remove_all(vessel, "mv |m v ")) %>% 
@@ -180,7 +184,8 @@ alerts_clean = alerts %>%
                                           vessel == "gulf islands spirit" ~ "spirit of vancouver island",
                                           vessel == "zeda" ~ "star zeta",
                                           vessel == "zeta" ~ "star zeta",
-                                          TRUE ~ vessel))
+                                          TRUE ~ vessel)) %>% 
+  dplyr::mutate(dplyr::across(!c(latitude, longitude, alert_sent),fedmatch::clean_strings))
 
 ```
 
@@ -190,10 +195,45 @@ alerts_clean = alerts %>%
 
 In this section, we will process the cleaned data to extract relevant information, create new variables, or derive insights. Describe the steps involved in data processing and any transformations or calculations performed.
 
-## Variable Selection
-
-
 ## Data Transformation
+
+### Matching WRAS and Vessel data
+
+WRAS alert data does not contain MMSI number of vessel which we need to use to identify vessel tracks in AIS. WRAS alert data contains spelling mistakes in the vessel name due to human error. We need a way to match the WRAS alert data to the vessel data, and we can only do that by name. Fuzzy matching will allow us to account for human error in spelling in data imports from WRAS data to match vessel names in our main vessel dataset. These settings have been changed a little bit, with the maxDist set at 0.5 we were getting incorrect matches The "checkMatch" object contains a df of vessels names which don't exactly match. I manually checked through this. Dataframe and manually renamed vessel names in the WRAS_data_import. With this many vessel names some are to close (in string distance) for the function to accurately match correctly in some instances.
+
+
+```{r}
+WRAS_data_matched <- fedmatch::merge_plus(data1 = alerts_clean, 
+                                          match_type = "fuzzy",
+                                          data2 = vessels_clean,
+                                          by.x = "vessel", by.y = "vessel_name",
+                                          unique_key_1 = "key1", unique_key_2 = "key2", 
+                                          suffixes = c("_1", "_2"),
+                                          fuzzy_settings = fedmatch::build_fuzzy_settings(maxDist = 0.1))
+
+
+## List of vessels without MMSI numbers
+View(tibble::as_tibble(unique(WRAS_data_matched$data1_nomatch$vessel)))
+
+## Cleaned data
+WRAS_data_midclean <- tibble::as_tibble(WRAS_data_matched$matches)
+
+
+```
+
+As a final step before we have cleaned alert data ready to process the AIS data, we need to filter for users from Ocean Wise and other non-mariner organizations who should not be included in the efficacy analysis (as they would not be vessel captains taking a response to an alert). 
+
+```{r}
+WRAS_data_cleaned = WRAS_data_midclean %>% 
+  dplyr::filter(!skipper %in% list(users_clean$name[users_clean$include_in_efficacy_analysis == "no"]))
+
+```
+
+
+## AIS data
+
+
+
 
 
 
