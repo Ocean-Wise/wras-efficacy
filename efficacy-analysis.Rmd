@@ -41,6 +41,10 @@ Therefore the aims of the project are to...
 * AIS
   + Extract from Ocean Networks Canada (ONC - Kiyomi Holman).
   + Already pre-processed by ONC.
+  + Columns: UTC Time | Local | Time | MMSI | IMO |	Name | Type |	Length |	Beam | Draught | SOG | COG | Heading |	Latitude |	Longitude |	Destination |	Status |	Flag
+    + We will use the SOG (speed over ground) and status to determine speed changes, and lat/lng to determine change in direction.
+
+
 
 ### Survey data
 * Microsoft form sent out by Ocean Wise to WRAS users.
@@ -48,8 +52,9 @@ Therefore the aims of the project are to...
   
 # Data Cleaning
 
-```{r echo = F}
+```{r warning = F, message = F}
 library(magrittr)
+library(lubridate) ## We need to load this specifically for the %within% function
 
 ## Edit this if you're running on your own Ocean Wise machine. 
 user = "AlexMitchell"
@@ -86,6 +91,10 @@ vessels = readxl::read_xlsx(paste0("C:/Users/",
   janitor::clean_names()
 
 ```
+
+### AIS
+
+Given how large this data is (~ 6-7GB per folder), and that it is split into weekly files, we will have to write a loop to go over the data, clean it and process it at the same time. The data will be loaded and processed later on after creating a cleaned alerts dataset.
 
 
 ## Data Cleaning Tasks
@@ -140,8 +149,8 @@ alerts_clean = alerts %>%
                   "skipper", 
                   "vessel", 
                   "species")) %>% 
-  # dplyr::filter(lubridate::year(alert_sent) == 2021 | lubridate::year(alert_sent) == 2020) %>%
-  dplyr::mutate(dplyr::across(!longitude & !latitude & !alert_sent, fedmatch::clean_strings)) %>%  ## cleans strings to remove special characters and formatting
+  dplyr::mutate(dplyr::across(!longitude & !latitude & !alert_sent, fedmatch::clean_strings), ## cleans strings to remove special characters and formatting
+                alert_sent = lubridate::force_tz(alert_sent, "Canada/Pacific")) %>%  ## I had to force the time zone for the later interval to be in the correct time zone as well. 
   dplyr::filter(!vessel %in% c("skana", "kellahan","tsitika","no vessel", 
                                "land",
                                "on land",
@@ -185,10 +194,9 @@ alerts_clean = alerts %>%
                                           vessel == "zeda" ~ "star zeta",
                                           vessel == "zeta" ~ "star zeta",
                                           TRUE ~ vessel)) %>% 
-  dplyr::mutate(dplyr::across(!c(latitude, longitude, alert_sent),fedmatch::clean_strings))
+  dplyr::mutate(dplyr::across(!c(latitude, longitude, alert_sent),fedmatch::clean_strings)) 
 
 ```
-
 
 
 # Data Processing
@@ -202,7 +210,7 @@ In this section, we will process the cleaned data to extract relevant informatio
 WRAS alert data does not contain MMSI number of vessel which we need to use to identify vessel tracks in AIS. WRAS alert data contains spelling mistakes in the vessel name due to human error. We need a way to match the WRAS alert data to the vessel data, and we can only do that by name. Fuzzy matching will allow us to account for human error in spelling in data imports from WRAS data to match vessel names in our main vessel dataset. These settings have been changed a little bit, with the maxDist set at 0.5 we were getting incorrect matches The "checkMatch" object contains a df of vessels names which don't exactly match. I manually checked through this. Dataframe and manually renamed vessel names in the WRAS_data_import. With this many vessel names some are to close (in string distance) for the function to accurately match correctly in some instances.
 
 
-```{r}
+```{r warning = F, message = F}
 WRAS_data_matched <- fedmatch::merge_plus(data1 = alerts_clean, 
                                           match_type = "fuzzy",
                                           data2 = vessels_clean,
@@ -212,37 +220,107 @@ WRAS_data_matched <- fedmatch::merge_plus(data1 = alerts_clean,
                                           fuzzy_settings = fedmatch::build_fuzzy_settings(maxDist = 0.1))
 
 
-## List of vessels without MMSI numbers
-View(tibble::as_tibble(unique(WRAS_data_matched$data1_nomatch$vessel)))
+## List of vessels without MMSI numbers - uncomment to view the dataset
+# View(tibble::as_tibble(unique(WRAS_data_matched$data1_nomatch$vessel)))
 
 ## Cleaned data
-WRAS_data_midclean <- tibble::as_tibble(WRAS_data_matched$matches)
+WRAS_data_midclean <- WRAS_data_matched$matches
 
 
 ```
 
-As a final step before we have cleaned alert data ready to process the AIS data, we need to filter for users from Ocean Wise and other non-mariner organizations who should not be included in the efficacy analysis (as they would not be vessel captains taking a response to an alert). 
+The final steps before we have cleaned alert data ready to process the AIS data - 
+* we need to filter for users from Ocean Wise and other non-mariner organizations who should not be included in the efficacy analysis - they would likely not take action to a WRAS alert. 
+* create a time interval of before and after an alert was sent to compare during analysis. This will also be used to reduce the size of the AIS data via a join later on. 
 
-```{r}
+```{r warning = F, message = F}
+user_filter = users_clean$name[users_clean$include_in_efficacy_analysis == "no"]
+
 WRAS_data_cleaned = WRAS_data_midclean %>% 
-  dplyr::filter(!skipper %in% list(users_clean$name[users_clean$include_in_efficacy_analysis == "no"]))
+  dplyr::filter(!skipper %in% user_filter) %>% 
+  dplyr::select(-c(key1, key2, notes, tier)) %>% 
+  dplyr::mutate(mmsi = as.numeric(mmsi)) %>% 
+  dplyr::mutate(range = lubridate::interval(alert_sent - lubridate::minutes(30), # create an interval 30mins before and after an alert was sent. 
+                                            alert_sent + lubridate::minutes(30)),
+                date = lubridate::as_date(alert_sent)) 
+
+## Remove uneccesary objects from environment to reduce storage in memory.
+rm(WRAS_data_matched, WRAS_data_midclean)
+
 
 ```
-
 
 ## AIS data
 
+The AIS data is already in a clean format, but we need to process it. Processing steps:
+* filter to remove ships which are: at anchor; moored; not under control; restricted maneuverability; pushing or towing alongside, or engaged in fishing. 
+  + This [link](https://datalastic.com/blog/ais-navigational-status/) describes the catagories of *status* well.
+* Then need to join data if the MSSI matches, the date matches, a the time is -30 or +30 mins from the time of the alert.
+
+This should build up a large dataset of alert info + vessel information
+
+```{r warning = F, message = F}
+
+status_filter = list("Moored", "Not under command", "Engaged in fishing", "At anchor", "Pushing or towing alongside", "Restricted manoeuvrability")
+
+## Create a list of folder paths to loop a function over to get all individual file names.
+folder_paths = c(paste0("C:/Users/",
+                            user,
+                            "/Ocean Wise Conservation Association/Whales Initiative - General/OceanWise Data/AIS/2019"),
+                paste0("C:/Users/",
+                            user,
+                            "/Ocean Wise Conservation Association/Whales Initiative - General/OceanWise Data/AIS/2020"),
+                paste0("C:/Users/",
+                            user,
+                            "/Ocean Wise Conservation Association/Whales Initiative - General/OceanWise Data/AIS/2021"),
+                paste0("C:/Users/",
+                            user,
+                            "/Ocean Wise Conservation Association/Whales Initiative - General/OceanWise Data/AIS/2022"))
+
+
+## Function to get all file names in folders
+get_file_names = function(folder_path){
+  files = list.files(path = folder_path, full.names = T)
+}
+
+## Create a list of all file names I want to iterate a function over
+file_list = purrr::map(folder_paths, get_file_names) %>% 
+  unlist()
+  
+
+## Loop function to load AIS data, clean it, mutate columns to correct format then join to the WRAS alerts data.
+
+loop_function = function(file_path) {
+  ## Going to use data.table::fread to load as it is exponentially faster than read.csv.
+  ais_data = data.table::fread(file_path) %>% 
+    janitor::clean_names() %>% 
+    dplyr::filter(!status %in% status_filter) %>% 
+    dplyr::mutate(local_time = lubridate::force_tz(lubridate::as_datetime(local_time), tzone = "Canada/Pacific"),
+                  date = lubridate::date(local_time))
+  
 
 
 
+  matched_alerts = ais_data %>% 
+    dplyr::inner_join(WRAS_data_cleaned, by = c("date", "mmsi")) %>% 
+    dplyr::mutate(match = dplyr::case_when(local_time %within% range ~ "Y",
+                                           TRUE ~ "N")) %>% 
+    dplyr::filter(match == "Y") ## If the AIS data falls within the alert interval we set earlier (and labelled it above with "Y" then keep these rows). 
+
+}
+
+```
 
 
-# Conclusion
+No that we have our have created a list of files from within the folders of AIS data between 2019 - 2022 we can loop over these file names and join to our WRAS data creating our final dataset.
 
-Summarize the main findings and insights from your data analysis. Discuss how your results address the research questions or goals outlined in the introduction. Also, mention any limitations or areas for further exploration.
+
+```{r warning = F, message = F}
+final_data = purrr::map(file_list, loop_function) %>% 
+  purrr::discard(~ nrow(.x) == 0) %>% 
+  purrr::reduce(dplyr::full_join)
+
+```
 
 ---
 
-This is a basic template to get you started with your analytical project in R Markdown. Feel free to customize it further based on your specific project requirements and analysis needs.
-
-Happy analyzing!
