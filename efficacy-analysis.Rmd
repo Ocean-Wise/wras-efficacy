@@ -196,6 +196,7 @@ alerts_clean = alerts %>%
                                           TRUE ~ vessel)) %>% 
   dplyr::mutate(dplyr::across(!c(latitude, longitude, alert_sent),fedmatch::clean_strings)) 
 
+
 ```
 
 
