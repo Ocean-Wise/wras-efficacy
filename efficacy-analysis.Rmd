@@ -381,7 +381,7 @@ diff_in_datasets = nrow(less_4)-nrow(less_2)
 diff_in_datasets
 ```
 
-Looks like there are vessels outside of ports and harbors which may slow to speeds of less than 4 knots, if I take it down to less than 2 knots we have `print(diff_in_datasets)` less records totaling `nrow(less_2)`, nearly 10% of the data.
+Looks like there are vessels outside of ports and harbors which may slow to speeds of less than 4 knots, if I take it down to less than 2 knots we have `diff_in_datasets` less records totaling `nrow(less_2)`, nearly 10% of the data.
 
 I wonder if I was to look at when the vessel speed is 0, if it is before the alert is sent then I remove that record... as we can likely assume that the vessel was in harbor or moving slowly out of the harbor when the alert was sent. 
 
