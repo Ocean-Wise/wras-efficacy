@@ -323,5 +323,68 @@ final_data = purrr::map(file_list, loop_function) %>%
 
 ```
 
+
+# Analysis
+
+## Exploration
+
+### Speed over ground
+
+I want to see how SOG is distributed throughtout our data, and if there are any values we can trim out, for instance extrememly low speeds (< 3knots maybe) which would indicate a vessel arriving at port, or any high speeds which may be an AIS malfunction.
+
+```{r}
+
+sog_explore = final_data %>% 
+  ggplot2::ggplot(data = .) +
+  ggplot2::geom_histogram(mapping = ggplot2::aes(x = sog), binwidth = 0.2)
+
+sog_explore
+
+```
+
+Spike at < 5knots, and some additional noise over 25 knots. I want to know more about the distribution in these areas, what vessels are travelling at such low speeds and plot out where these low speeds tend to be (I have a feeling it will be in port), and then what vessels are travelling at high speeds (I think thiese could be enforcement or anomolys but lets test).
+
+
+
+```{r}
+low_speed = final_data %>%
+  ggplot2::ggplot(.) + 
+  ggplot2::geom_histogram(mapping = ggplot2::aes(x = sog), binwidth = 0.1) +
+  ggplot2::coord_cartesian(xlim = c(0, 10))
+
+low_speed
+
+```
+
+Large cluster approaching 0. Why? I imagine that the majority of these will be within port boundries, or near mooring bouys/tug areas. I can make a map to test this.
+
+```{r}
+
+low_speed_map = final_data %>% 
+  dplyr::filter(sog < 2)  
+
+leaflet::leaflet() %>% 
+  leaflet::addTiles() %>% 
+  leaflet::addCircleMarkers(lng = low_speed_map$longitude.x, lat = low_speed_map$latitude.x)
+
+
+```
+
+```{r, message=FALSE}
+less_4 = final_data %>% 
+  dplyr::filter(sog < 4)  
+
+less_2 = final_data %>% 
+  dplyr::filter(sog < 2)  
+
+diff_in_datasets = nrow(less_4)-nrow(less_2) 
+diff_in_datasets
+```
+
+Looks like there are vessels outside of ports and harbors which may slow to speeds of less than 4 knots, if I take it down to less than 2 knots we have `print(diff_in_datasets)` less records totaling `nrow(less_2)`, nearly 10% of the data.
+
+I wonder if I was to look at when the vessel speed is 0, if it is before the alert is sent then I remove that record... as we can likely assume that the vessel was in harbor or moving slowly out of the harbor when the alert was sent. 
+
+
 ---
 
