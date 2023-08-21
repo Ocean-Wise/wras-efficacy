@@ -11,45 +11,42 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-
-#### No QA has been done. 
+#### No QA has been done.
 
 # Introduction
 
 The Whale Report Alert System, running since 2018, has not been empirically tested to assess the effectiveness of the tool. In order to assess our own tool, push for further funding, and show the effectiveness to international partners we need to have evidence of its success.
 
-Therefore the aims of the project are to...
-* Use survey data to understand more about mariners behavior when using the WRAS from their perspective
-* Use AIS and WRAS alert data to test how often a vessel changes speed or direction due to a WRAS alert
+Therefore the aims of the project are to... \* Use survey data to understand more about mariners behavior when using the WRAS from their perspective \* Use AIS and WRAS alert data to test how often a vessel changes speed or direction due to a WRAS alert
 
 ## Data
+
 ### Ocean Wise
-* WRAS Alert data
-  + This comes from an extract of the database from Lapis. It contains information on all users who received an alert from a sighting.
-  + This does not include operations center staff/desktop application users.
 
-* WRAS User data
-  + Some users should not be included in the analysis, for example Ocean Wise staff. We can use this to filter out users we want to ignore.
+-   WRAS Alert data
+    -   This comes from an extract of the database from Lapis. It contains information on all users who received an alert from a sighting.
+    -   This does not include operations center staff/desktop application users.
+-   WRAS User data
+    -   Some users should not be included in the analysis, for example Ocean Wise staff. We can use this to filter out users we want to ignore.
+-   Vessel data
+    -   Contains information on all the vessels logged through the WRAS alerts data.
+    -   Very messy, containing a lot of user error in entering data.
+    -   I have spent hours on MarineTraffic identifying vessels and additional information.
+    -   We need to join the vessel data with the WRAS data as we will use the MMSI number of the vessel to enable us to use WRAS alert data with the AIS data.
 
-* Vessel data
-  + Contains information on all the vessels logged through the WRAS alerts data.
-  + Very messy, containing a lot of user error in entering data.
-  + I have spent hours on MarineTraffic identifying vessels and additional information.
-  + We need to join the vessel data with the WRAS data as we will use the MMSI number of the vessel to enable us to use WRAS alert data with the AIS data.
-  
 ### Vessel position data
-* AIS
-  + Extract from Ocean Networks Canada (ONC - Kiyomi Holman).
-  + Already pre-processed by ONC.
-  + Columns: UTC Time | Local | Time | MMSI | IMO |	Name | Type |	Length |	Beam | Draught | SOG | COG | Heading |	Latitude |	Longitude |	Destination |	Status |	Flag
-    + We will use the SOG (speed over ground) and status to determine speed changes, and lat/lng to determine change in direction.
 
-
+-   AIS
+    -   Extract from Ocean Networks Canada (ONC - Kiyomi Holman).
+    -   Already pre-processed by ONC.
+    -   Columns: UTC Time \| Local \| Time \| MMSI \| IMO \| Name \| Type \| Length \| Beam \| Draught \| SOG \| COG \| Heading \| Latitude \| Longitude \| Destination \| Status \| Flag
+        -   We will use the SOG (speed over ground) and status to determine speed changes, and lat/lng to determine change in direction.
 
 ### Survey data
-* Microsoft form sent out by Ocean Wise to WRAS users.
-  + TBD
-  
+
+-   Microsoft form sent out by Ocean Wise to WRAS users.
+    -   TBD
+
 # Data Cleaning
 
 ```{r warning = F, message = F}
@@ -69,7 +66,7 @@ In this section, we will perform data cleaning tasks to prepare the dataset for 
 ```{r  warning = F, message = F}
 alerts = readxl::read_xlsx(paste0("C:/Users/",
                                              user,
-                                             "/Ocean Wise Conservation Association/Whales Initiative - General/OceanWise Data/WRAS/WRAS_main.xlsx")) %>% 
+                                             "/Ocean Wise Conservation Association/Whales Initiative - General/Ocean Wise Data/WRAS/WRAS_main.xlsx")) %>% 
   janitor::clean_names()
 ```
 
@@ -87,15 +84,14 @@ users = readxl::read_xlsx(paste0("C:/Users/",
 ```{r warning = F, message = F}
 vessels = readxl::read_xlsx(paste0("C:/Users/",
                                              user,
-                                             "/Ocean Wise Conservation Association/Whales Initiative - General/OceanWise Data/WRAS/Vessels_main.xlsx")) %>% 
+                                             "/Ocean Wise Conservation Association/Whales Initiative - General/Ocean Wise Data/WRAS/Vessels_main.xlsx")) %>% 
   janitor::clean_names()
 
 ```
 
 ### AIS
 
-Given how large this data is (~ 6-7GB per folder), and that it is split into weekly files, we will have to write a loop to go over the data, clean it and process it at the same time. The data will be loaded and processed later on after creating a cleaned alerts dataset.
-
+Given how large this data is (\~ 6-7GB per folder), and that it is split into weekly files, we will have to write a loop to go over the data, clean it and process it at the same time. The data will be loaded and processed later on after creating a cleaned alerts dataset.
 
 ## Data Cleaning Tasks
 
@@ -103,8 +99,8 @@ Perform specific data cleaning tasks, such as handling missing values, removing 
 
 ### Users
 
-* Relatively simple cleaning by removing special characters from all columns barring emails.
-* The `include_in_efficacy_analysis` filter removes Ocean Wise staff from the analysis.
+-   Relatively simple cleaning by removing special characters from all columns barring emails.
+-   The `include_in_efficacy_analysis` filter removes Ocean Wise staff from the analysis.
 
 ```{r warning = F, message = F}
 users_clean = users %>% 
@@ -114,12 +110,11 @@ users_clean = users %>%
   
 ```
 
-
 ### Vessels
- 
-* Splitting the `loa` and `be` column to create a length and breadth columns and extracting the numbers from those columns to remove odd characters.
-* I added a `Key2` column in here which is just a row number, this is needed for the `fuzzy_matching` later on.
-* Removing the "mv" and "m v" parts of strings as they appear 
+
+-   Splitting the `loa` and `be` column to create a length and breadth columns and extracting the numbers from those columns to remove odd characters.
+-   I added a `Key2` column in here which is just a row number, this is needed for the `fuzzy_matching` later on.
+-   Removing the "mv" and "m v" parts of strings as they appear
 
 ```{r warning = F, message = F}
 vessels_clean = vessels %>%
@@ -131,14 +126,13 @@ vessels_clean = vessels %>%
   dplyr::select(vessel_name, mmsi, imo, class, loa, be, notes, key2)
 ```
 
-
 ### Alerts
 
-* Clean strings to remove special characters
-* Filter out the Ocean Wise vessels
-* Again, create a key for the fuzzy matching that happens shortly
-* Remove acronyms before vessel names due to them only partially being used
-* We need to adjust some of the names of vessels as the fuzzy matching can't handle the miss-spellings. This is a manual process and will need to be updated when we get more WRAS alerts. 
+-   Clean strings to remove special characters
+-   Filter out the Ocean Wise vessels
+-   Again, create a key for the fuzzy matching that happens shortly
+-   Remove acronyms before vessel names due to them only partially being used
+-   We need to adjust some of the names of vessels as the fuzzy matching can't handle the miss-spellings. This is a manual process and will need to be updated when we get more WRAS alerts.
 
 ```{r warning = F, message = F}
 alerts_clean = alerts %>% 
@@ -199,7 +193,6 @@ alerts_clean = alerts %>%
 
 ```
 
-
 # Data Processing
 
 In this section, we will process the cleaned data to extract relevant information, create new variables, or derive insights. Describe the steps involved in data processing and any transformations or calculations performed.
@@ -209,7 +202,6 @@ In this section, we will process the cleaned data to extract relevant informatio
 ### Matching WRAS and Vessel data
 
 WRAS alert data does not contain MMSI number of vessel which we need to use to identify vessel tracks in AIS. WRAS alert data contains spelling mistakes in the vessel name due to human error. We need a way to match the WRAS alert data to the vessel data, and we can only do that by name. Fuzzy matching will allow us to account for human error in spelling in data imports from WRAS data to match vessel names in our main vessel dataset. These settings have been changed a little bit, with the maxDist set at 0.5 we were getting incorrect matches The "checkMatch" object contains a df of vessels names which don't exactly match. I manually checked through this. Dataframe and manually renamed vessel names in the WRAS_data_import. With this many vessel names some are to close (in string distance) for the function to accurately match correctly in some instances.
-
 
 ```{r warning = F, message = F}
 WRAS_data_matched <- fedmatch::merge_plus(data1 = alerts_clean, 
@@ -230,9 +222,7 @@ WRAS_data_midclean <- WRAS_data_matched$matches
 
 ```
 
-The final steps before we have cleaned alert data ready to process the AIS data - 
-* we need to filter for users from Ocean Wise and other non-mariner organizations who should not be included in the efficacy analysis - they would likely not take action to a WRAS alert. 
-* create a time interval of before and after an alert was sent to compare during analysis. This will also be used to reduce the size of the AIS data via a join later on. 
+The final steps before we have cleaned alert data ready to process the AIS data - \* we need to filter for users from Ocean Wise and other non-mariner organizations who should not be included in the efficacy analysis - they would likely not take action to a WRAS alert. \* create a time interval of before and after an alert was sent to compare during analysis. This will also be used to reduce the size of the AIS data via a join later on.
 
 ```{r warning = F, message = F}
 user_filter = users_clean$name[users_clean$include_in_efficacy_analysis == "no"]
@@ -241,7 +231,8 @@ WRAS_data_cleaned = WRAS_data_midclean %>%
   dplyr::filter(!skipper %in% user_filter) %>% 
   dplyr::select(-c(key1, key2, notes, tier)) %>% 
   dplyr::mutate(mmsi = as.numeric(mmsi)) %>% 
-  dplyr::mutate(range = lubridate::interval(alert_sent - lubridate::minutes(30), # create an interval 30mins before and after an alert was sent. 
+  dplyr::mutate(range = lubridate::interval(alert_sent,
+                                            # alert_sent - lubridate::minutes(30), # create an interval 30mins before and after an alert was sent. 
                                             alert_sent + lubridate::minutes(30)),
                 date = lubridate::as_date(alert_sent)) 
 
@@ -253,10 +244,7 @@ rm(WRAS_data_matched, WRAS_data_midclean)
 
 ## AIS data
 
-The AIS data is already in a clean format, but we need to process it. Processing steps:
-* filter to remove ships which are: at anchor; moored; not under control; restricted maneuverability; pushing or towing alongside, or engaged in fishing. 
-  + This [link](https://datalastic.com/blog/ais-navigational-status/) describes the catagories of *status* well.
-* Then need to join data if the MSSI matches, the date matches, a the time is -30 or +30 mins from the time of the alert.
+The AIS data is already in a clean format, but we need to process it. Processing steps: \* filter to remove ships which are: at anchor; moored; not under control; restricted maneuverability; pushing or towing alongside, or engaged in fishing. + This [link](https://datalastic.com/blog/ais-navigational-status/) describes the catagories of *status* well. \* Then need to join data if the MSSI matches, the date matches, a the time is -30 or +30 mins from the time of the alert.
 
 This should build up a large dataset of alert info + vessel information
 
@@ -267,16 +255,16 @@ status_filter = list("Moored", "Not under command", "Engaged in fishing", "At an
 ## Create a list of folder paths to loop a function over to get all individual file names.
 folder_paths = c(paste0("C:/Users/",
                             user,
-                            "/Ocean Wise Conservation Association/Whales Initiative - General/OceanWise Data/AIS/2019"),
+                            "/Ocean Wise Conservation Association/Whales Initiative - General/Ocean Wise Data/AIS/2019"),
                 paste0("C:/Users/",
                             user,
-                            "/Ocean Wise Conservation Association/Whales Initiative - General/OceanWise Data/AIS/2020"),
+                            "/Ocean Wise Conservation Association/Whales Initiative - General/Ocean Wise Data/AIS/2020"),
                 paste0("C:/Users/",
                             user,
-                            "/Ocean Wise Conservation Association/Whales Initiative - General/OceanWise Data/AIS/2021"),
+                            "/Ocean Wise Conservation Association/Whales Initiative - General/Ocean Wise Data/AIS/2021"),
                 paste0("C:/Users/",
                             user,
-                            "/Ocean Wise Conservation Association/Whales Initiative - General/OceanWise Data/AIS/2022"))
+                            "/Ocean Wise Conservation Association/Whales Initiative - General/Ocean Wise Data/AIS/2022"))
 
 
 ## Function to get all file names in folders
@@ -295,12 +283,10 @@ loop_function = function(file_path) {
   ## Going to use data.table::fread to load as it is exponentially faster than read.csv.
   ais_data = data.table::fread(file_path) %>% 
     janitor::clean_names() %>% 
-    dplyr::filter(!status %in% status_filter) %>% 
+    dplyr::filter(!status %in% status_filter) %>%
     dplyr::mutate(local_time = lubridate::force_tz(lubridate::as_datetime(local_time), tzone = "Canada/Pacific"),
                   date = lubridate::date(local_time))
   
-
-
 
   matched_alerts = ais_data %>% 
     dplyr::inner_join(WRAS_data_cleaned, by = c("date", "mmsi")) %>% 
@@ -312,29 +298,107 @@ loop_function = function(file_path) {
 
 ```
 
-
 No that we have our have created a list of files from within the folders of AIS data between 2019 - 2022 we can loop over these file names and join to our WRAS data creating our final dataset.
 
-
 ```{r warning = F, message = F}
-final_data = purrr::map(file_list, loop_function) %>% 
+matched_wras_ais = purrr::map(file_list, loop_function) %>%
   purrr::discard(~ nrow(.x) == 0) %>% 
-  purrr::reduce(dplyr::full_join)
+  purrr::reduce(dplyr::full_join) 
+
+```
+
+## Baseline data
+
+Need to get some baseline data to compare our post-WRAS alert vessel behavior to the average behavior of a vessel. To do this I am going to use the 2019 data given that shipping would've been at pre-pandemic levels, and WRAS engagement would've been relatively (to now) low being a new tool.
+
+```{r}
+## function to loop through 2019 data and do some cleaning
+
+baseline_files = list.files(paste0("C:/Users/", user,"/Ocean Wise Conservation Association/Whales Initiative - General/Ocean Wise Data/AIS/2019"), full.names = T)
+
+
+baseline_loop_function = function(file_path) {
+  baseline_data = data.table::fread(file_path) %>% 
+    janitor::clean_names() %>% 
+    dplyr::filter(!status %in% status_filter) %>%
+    dplyr::mutate(local_time = lubridate::force_tz(lubridate::as_datetime(local_time), tzone = "Canada/Pacific"),
+                  date = lubridate::date(local_time)) %>% 
+    dplyr::select(c("date", "mmsi", "name", "type", "sog", "cog", "heading"))
+
+  remove_alerts = baseline_data %>% 
+    dplyr::anti_join(WRAS_data_cleaned, by = c("date", "mmsi")) %>%
+    dplyr::mutate(type = dplyr::case_when(stringr::str_detect(type, "Tanker") ~ "Tanker",
+                                          stringr::str_detect(type, "Cargo ship") ~ "Cargo ship",
+                                          stringr::str_detect(type, "Other") ~ "Other",
+                                          TRUE ~ type)) %>% 
+    dplyr::filter(type %in% c("Cargo ship", "HSC", "Passenger ship"))
+}
+
+```
+
+We will now loop over the files in the 2019 folder, filter out any vessels which received WRAS alerts in this time. 
+
+```{r}
+baseline_data = purrr::map(baseline_files, baseline_loop_function) %>%
+  purrr::reduce(dplyr::full_join) %>% 
+  dplyr::filter(lubridate::year(date) != 2018) %>% 
+  # dplyr::filter(sog > 7 & sog < 40.2)
+  # dplyr::filter(sog < 40.2)
+  dplyr::filter(sog > 0.2 & sog < 40.2)
+
+median_baseline_filtered = baseline_data %>% 
+  dplyr::filter(sog > 7) %>% 
+  dplyr::group_by(type) %>% 
+  dplyr::summarise(median = median(sog))
+
+median_baseline_non_filtered = baseline_data %>% 
+  dplyr::group_by(type) %>% 
+  dplyr::summarise(median = median(sog))
+
+
+baseline_plots_no_lower = baseline_data %>% 
+  dplyr::filter(sog > 7) %>% 
+  dplyr::left_join(median_baseline_filtered, by = "type") %>% 
+  dplyr::group_by(type) %>%  
+  ggplot2::ggplot(ggplot2::aes(x = sog)) +
+  ggplot2::geom_histogram(binwidth = 1) +
+  ggplot2::geom_vline(ggplot2::aes(xintercept = median), color = "red", linetype = "dashed") +
+  ggplot2::facet_wrap(~type, scales = "free") +
+  ggplot2::labs(x = "SOG", y = "Frequency") +
+  ggplot2::theme_minimal()
+
+baseline_plots_lower = baseline_data %>% 
+  dplyr::left_join(median_baseline_non_filtered, by = "type") %>% 
+  dplyr::group_by(type) %>%  
+  ggplot2::ggplot(ggplot2::aes(x = sog)) +
+  ggplot2::geom_histogram(binwidth = 1) +
+  ggplot2::geom_vline(ggplot2::aes(xintercept = median), color = "red", linetype = "dashed") +
+  ggplot2::facet_wrap(~type, scales = "free") +
+  ggplot2::labs(x = "SOG", y = "Frequency") +
+  ggplot2::theme_minimal()
+
+ggpubr::ggarrange(baseline_plots_no_lower, baseline_plots_lower,
+                  labels = c("filtered", "non-filtered"),
+                  nrow = 2)
+
+
 
 ```
 
 
-# Analysis
+# Exploration
 
-## Exploration
+We need to further explore the data to see whether we can eek out any other necessary cleaning of outlines, or identify some questions to answer.
 
-### Speed over ground
+For the efficacy analysis we are interested in testing whether or not we see a change in speed of direction which could be attributed to an event (WRAS alert). Speed is relatively straight forward, direction is not.
 
-I want to see how SOG is distributed throughtout our data, and if there are any values we can trim out, for instance extrememly low speeds (< 3knots maybe) which would indicate a vessel arriving at port, or any high speeds which may be an AIS malfunction.
+## Speed over ground
+
+I want to see how SOG is distributed through out our data, and if there are any values we can trim out, for instance extremely low speeds (\< 3knots maybe) which would indicate a vessel arriving at port, or any high speeds which may be an AIS malfunction.
 
 ```{r}
 
-sog_explore = final_data %>% 
+sog_explore = matched_wras_ais %>% 
   ggplot2::ggplot(data = .) +
   ggplot2::geom_histogram(mapping = ggplot2::aes(x = sog), binwidth = 0.2)
 
@@ -342,49 +406,150 @@ sog_explore
 
 ```
 
-Spike at < 5knots, and some additional noise over 25 knots. I want to know more about the distribution in these areas, what vessels are travelling at such low speeds and plot out where these low speeds tend to be (I have a feeling it will be in port), and then what vessels are travelling at high speeds (I think thiese could be enforcement or anomolys but lets test).
-
-
+Spike at \< 5knots, and some additional noise over 25 knots. I want to know more about the distribution in these areas, what vessels are travelling at such low speeds and plot out where these low speeds tend to be (I have a feeling it will be in port), and then what vessels are travelling at high speeds (I think these could be enforcement or anomaly but lets test).
 
 ```{r}
-low_speed = final_data %>%
+high_speed = matched_wras_ais %>% 
+  ggplot2::ggplot() +
+  ggplot2::geom_histogram(mapping = ggplot2::aes(x = sog), binwidth = 0.1) +
+  ggplot2::coord_cartesian(xlim = c(26, 110))
+
+high_speed
+
+high_speed_data = matched_wras_ais %>% 
+  dplyr::filter(sog > 25) %>% 
+  dplyr::select(c(name, mmsi, type, sog, status))
+```
+
+The high speed craft generally travel at \<\~40 knots, although there is one case of the speed tipping into 40.3 knots. Anything above this is errors and states that vessel traveled in excess of 100 knots. This can be removed.
+
+```{r}
+low_speed = matched_wras_ais %>%
   ggplot2::ggplot(.) + 
   ggplot2::geom_histogram(mapping = ggplot2::aes(x = sog), binwidth = 0.1) +
   ggplot2::coord_cartesian(xlim = c(0, 10))
 
 low_speed
 
+low_speed_data = matched_wras_ais %>%
+  dplyr::group_by(alert_sent) %>% 
+  dplyr::filter(any(sog <= 0.2)) %>% ## This tests if this value appears in a group (any) and filters it out. Example below of how it works.
+  dplyr::select(local_time, alert_sent, name, mmsi, skipper, type, sog, status, latitude.x, longitude.x) %>% 
+  dplyr::arrange(alert_sent)
+
 ```
 
-Large cluster approaching 0. Why? I imagine that the majority of these will be within port boundries, or near mooring bouys/tug areas. I can make a map to test this.
+Large cluster approaching 0. Why? I imagine that the majority of these will be within port boundaries, or near mooring buoys/tug areas. I can make a map to test this.
 
 ```{r}
 
-low_speed_map = final_data %>% 
-  dplyr::filter(sog < 2)  
+low_speed_map = matched_wras_ais %>% 
+  dplyr::filter(sog < 0.2)  
 
-leaflet::leaflet() %>% 
+leaflet::leaflet(data = low_speed_map) %>% 
   leaflet::addTiles() %>% 
-  leaflet::addCircleMarkers(lng = low_speed_map$longitude.x, lat = low_speed_map$latitude.x)
-
+  leaflet::addCircleMarkers(lng = ~longitude.x, lat = ~latitude.x,
+                            popup = ~(paste(name, type)))  
+  
 
 ```
 
-```{r, message=FALSE}
-less_4 = final_data %>% 
-  dplyr::filter(sog < 4)  
+Filtering the speed down to \<0.2 knots shows that ships at these speeds are broadly always in or very close to port. Although not outliars in the study, these ships won't slow down due to being slowed down already + in port so I think I should remove them from the analysis.
 
-less_2 = final_data %>% 
-  dplyr::filter(sog < 2)  
+Filter out all of the data under 0.2 knots + over 40.2 knots. Group by class and calculate difference to median for speed of vessels. The only issue with filtering out data under 0.2 knots and 40.2 knots might give me a skewed amount of data points before and after the alert was sent, although, looking at the AIS data it seems like that was already the case...
 
-diff_in_datasets = nrow(less_4)-nrow(less_2) 
-diff_in_datasets
+```{r}
+
+clean_wras_ais_filtered = matched_wras_ais %>%
+  dplyr::filter(sog > 7 & sog < 40.2) %>% 
+  dplyr::mutate(type = dplyr::case_when(stringr::str_detect(type, "Tanker") ~ "Tanker",
+                                        stringr::str_detect(type, "Cargo ship") ~ "Cargo ship",
+                                        stringr::str_detect(type, "Other") ~ "Other",
+                                        TRUE ~ type))
+
+clean_wras_ais_non_filtered = matched_wras_ais %>%
+  dplyr::filter(sog < 40.2) %>% 
+  dplyr::mutate(type = dplyr::case_when(stringr::str_detect(type, "Tanker") ~ "Tanker",
+                                        stringr::str_detect(type, "Cargo ship") ~ "Cargo ship",
+                                        stringr::str_detect(type, "Other") ~ "Other",
+                                        TRUE ~ type))
+
 ```
 
-Looks like there are vessels outside of ports and harbors which may slow to speeds of less than 4 knots, if I take it down to less than 2 knots we have `diff_in_datasets` less records totaling `nrow(less_2)`, nearly 10% of the data.
+Is there some groups that just don't need to be included as they are so small?
 
-I wonder if I was to look at when the vessel speed is 0, if it is before the alert is sent then I remove that record... as we can likely assume that the vessel was in harbor or moving slowly out of the harbor when the alert was sent. 
+```{r}
+data_count = clean_wras_ais_filtered %>% 
+  dplyr::group_by(type) %>% 
+  dplyr::summarise(count = dplyr::n_distinct(alert_sent))
+
+```
+
+Filter out everything which is under 100 sample size, leaving us with..
+
+```{r}
+vessel_type_filter = data_count %>% dplyr::filter(count > 100) %>% .$type
+vessel_type_filter
+```
+
+Left with "Passenger Ship", "HSC" (high speed craft), and "Cargo ship", totaling 3394 alerts.
+
+#### Takeaways
+
+-   We need to filter the data by vessels \> 0.2 knots and \< 40 knots
+
+-   We will filter the groups of vessel types which have over 100 records, this includes HSC, Passenger ships, and Cargo Ships
+
+# Analyses
+
+## Speed
+
+```{r}
+
+median_value_filtered = clean_wras_ais_filtered %>%
+  dplyr::filter(type %in% vessel_type_filter) %>%
+  dplyr::group_by(type) %>%
+  dplyr::summarise(median_test = median(sog))
+
+median_value_non_filtered = clean_wras_ais_non_filtered %>%
+  dplyr::filter(type %in% vessel_type_filter) %>%
+  dplyr::group_by(type) %>%
+  dplyr::summarise(median_test = median(sog))
 
 
----
+wras_filtered = clean_wras_ais_filtered %>% 
+  dplyr::filter(type %in% vessel_type_filter) %>%
+  dplyr::filter(sog > 7) %>% 
+  dplyr::left_join(median_baseline_filtered, by = "type") %>% 
+  dplyr::left_join(median_value_filtered, by = "type") %>% 
+  dplyr::group_by(type) %>%  
+  ggplot2::ggplot(ggplot2::aes(x = sog)) +
+  ggplot2::geom_histogram(binwidth = 1) +
+  ggplot2::geom_vline(ggplot2::aes(xintercept = median), color = "red", linetype = "dashed") +
+  ggplot2::geom_vline(ggplot2::aes(xintercept = median_test), color = "darkgrey", linetype = "dashed") +
+  ggplot2::facet_wrap(~type, scales = "free") +
+  ggplot2::labs(x = "SOG", y = "Frequency") +
+  ggplot2::theme_minimal()
 
+wras_non_filtered = clean_wras_ais_non_filtered %>% 
+  dplyr::filter(type %in% vessel_type_filter) %>%
+  dplyr::left_join(median_baseline_non_filtered, by = "type") %>% 
+  dplyr::left_join(median_value_non_filtered, by = "type") %>% 
+  dplyr::group_by(type) %>%  
+  ggplot2::ggplot(ggplot2::aes(x = sog)) +
+  ggplot2::geom_histogram(binwidth = 1) +
+  ggplot2::geom_vline(ggplot2::aes(xintercept = median), color = "red", linetype = "dashed") +
+  ggplot2::geom_vline(ggplot2::aes(xintercept = median_test), color = "darkgrey", linetype = "dashed") +
+  ggplot2::facet_wrap(~type, scales = "free") +
+  ggplot2::labs(x = "SOG", y = "Frequency") +
+  ggplot2::theme_minimal()
+
+
+# Create histograms for each group with adjusted axes
+ggpubr::ggarrange(wras_filtered, wras_non_filtered,
+                  labels = c("filtered", "non-filtered"),
+                  nrow = 2)
+
+```
+
+#### 
