@@ -17,7 +17,11 @@ knitr::opts_chunk$set(echo = TRUE)
 
 The Whale Report Alert System, running since 2018, has not been empirically tested to assess the effectiveness of the tool. In order to assess our own tool, push for further funding, and show the effectiveness to international partners we need to have evidence of its success.
 
-Therefore the aims of the project are to... \* Use survey data to understand more about mariners behavior when using the WRAS from their perspective \* Use AIS and WRAS alert data to test how often a vessel changes speed or direction due to a WRAS alert
+Therefore the aims of the project are to...
+
+-   Use survey data to understand more about mariners behavior when using the WRAS from their perspective
+
+-   Use AIS and WRAS alert data to test how often a vessel changes speed or direction due to a WRAS alert
 
 ## Data
 
@@ -100,7 +104,6 @@ Perform specific data cleaning tasks, such as handling missing values, removing 
 ### Users
 
 -   Relatively simple cleaning by removing special characters from all columns barring emails.
--   The `include_in_efficacy_analysis` filter removes Ocean Wise staff from the analysis.
 
 ```{r warning = F, message = F}
 users_clean = users %>% 
@@ -201,7 +204,7 @@ In this section, we will process the cleaned data to extract relevant informatio
 
 ### Matching WRAS and Vessel data
 
-WRAS alert data does not contain MMSI number of vessel which we need to use to identify vessel tracks in AIS. WRAS alert data contains spelling mistakes in the vessel name due to human error. We need a way to match the WRAS alert data to the vessel data, and we can only do that by name. Fuzzy matching will allow us to account for human error in spelling in data imports from WRAS data to match vessel names in our main vessel dataset. These settings have been changed a little bit, with the maxDist set at 0.5 we were getting incorrect matches The "checkMatch" object contains a df of vessels names which don't exactly match. I manually checked through this. Dataframe and manually renamed vessel names in the WRAS_data_import. With this many vessel names some are to close (in string distance) for the function to accurately match correctly in some instances.
+WRAS alert data does not contain MMSI number of vessel which we need to use to identify vessel tracks in AIS. WRAS alert data contains spelling mistakes in the vessel name due to human error. We need a way to match the WRAS alert data to the vessel data, and we can only do that by name. Fuzzy matching will allow us to account for human error in spelling in WRAS data to match vessel names in our main vessel dataset. These settings have been changed a little bit, with the maxDist set at 0.5 we were getting incorrect matches The "checkMatch" object contains a df of vessels names which don't exactly match. I manually checked through this. Dataframe and manually renamed vessel names in the WRAS_data_import. With this many vessel names some are too close (in string distance) for the function to accurately match correctly in all instances.
 
 ```{r warning = F, message = F}
 WRAS_data_matched <- fedmatch::merge_plus(data1 = alerts_clean, 
@@ -222,7 +225,17 @@ WRAS_data_midclean <- WRAS_data_matched$matches
 
 ```
 
-The final steps before we have cleaned alert data ready to process the AIS data - \* we need to filter for users from Ocean Wise and other non-mariner organizations who should not be included in the efficacy analysis - they would likely not take action to a WRAS alert. \* create a time interval of before and after an alert was sent to compare during analysis. This will also be used to reduce the size of the AIS data via a join later on.
+The final steps before we have cleaned alert data ready to process the AIS data -
+
+-   Filter for users from Ocean Wise and other non-mariner organizations who should not be included in the efficacy analysis - they would likely not take action to a WRAS alert.
+
+-   Create a time interval of before and after an alert was sent to compare during analysis. This will also be used to reduce the size of the AIS data via a join later on.
+
+    -   Imagining a scenario where a vessel is on the edge of the alert radius, the epicenter being 5nm away (total diameter of an alert is 10nm). In 20mins a vessel, travelling at 13.5knots, will reach the alert centre.
+
+    -   For this reason, I have chose 20min as a good guess for how long it would take for a vessel to slow down and stay slowed, any longer we might see and uptick in speed.
+
+-   The `include_in_efficacy_analysis` filter removes Ocean Wise staff from the analysis.
 
 ```{r warning = F, message = F}
 user_filter = users_clean$name[users_clean$include_in_efficacy_analysis == "no"]
@@ -233,7 +246,7 @@ WRAS_data_cleaned = WRAS_data_midclean %>%
   dplyr::mutate(mmsi = as.numeric(mmsi)) %>% 
   dplyr::mutate(range = lubridate::interval(alert_sent,
                                             # alert_sent - lubridate::minutes(30), # create an interval 30mins before and after an alert was sent. 
-                                            alert_sent + lubridate::minutes(30)),
+                                            alert_sent + lubridate::minutes(20)),
                 date = lubridate::as_date(alert_sent)) 
 
 ## Remove uneccesary objects from environment to reduce storage in memory.
@@ -244,9 +257,25 @@ rm(WRAS_data_matched, WRAS_data_midclean)
 
 ## AIS data
 
-The AIS data is already in a clean format, but we need to process it. Processing steps: \* filter to remove ships which are: at anchor; moored; not under control; restricted maneuverability; pushing or towing alongside, or engaged in fishing. + This [link](https://datalastic.com/blog/ais-navigational-status/) describes the catagories of *status* well. \* Then need to join data if the MSSI matches, the date matches, a the time is -30 or +30 mins from the time of the alert.
+The AIS data is already in a clean format, but we need to process it to remove ships which are a particular status (this [link](https://datalastic.com/blog/ais-navigational-status/){style="font-size: 11pt;"} describes the categories of AIS *status*), as well as create a interval before and after alerts to reduce the data size to only relevant data. Processing steps:
 
-This should build up a large dataset of alert info + vessel information
+-   Filter to remove ships which are:
+
+    -   At anchor;
+
+    -   Moored;
+
+    -   Not under control;
+
+    -   Restricted maneuverability;
+
+    -   Pushing or towing alongside
+
+    -   Engaged in fishing
+
+-   Join data if the MSSI matches, the date matches, a the time is -30 or +30 mins from the time of the alert.
+
+Aim of this cleaning is to reduce the data size drastically to only relevant AIS tracks and vessels which are moving without assistance or hindrance.
 
 ```{r warning = F, message = F}
 
@@ -292,7 +321,7 @@ loop_function = function(file_path) {
     dplyr::inner_join(WRAS_data_cleaned, by = c("date", "mmsi")) %>% 
     dplyr::mutate(match = dplyr::case_when(local_time %within% range ~ "Y",
                                            TRUE ~ "N")) %>% 
-    dplyr::filter(match == "Y") ## If the AIS data falls within the alert interval we set earlier (and labelled it above with "Y" then keep these rows). 
+    dplyr::filter(match == "Y") ## If the AIS data falls within the alert interval we set earlier (and labelled it above with "Y" then keep these rows).
 
 }
 
@@ -323,7 +352,7 @@ baseline_loop_function = function(file_path) {
     dplyr::filter(!status %in% status_filter) %>%
     dplyr::mutate(local_time = lubridate::force_tz(lubridate::as_datetime(local_time), tzone = "Canada/Pacific"),
                   date = lubridate::date(local_time)) %>% 
-    dplyr::select(c("date", "mmsi", "name", "type", "sog", "cog", "heading"))
+    dplyr::select(c("date", "mmsi", "name", "type", "length", "beam", "sog", "cog", "heading", "latitude", "longitude"))
 
   remove_alerts = baseline_data %>% 
     dplyr::anti_join(WRAS_data_cleaned, by = c("date", "mmsi")) %>%
@@ -336,55 +365,120 @@ baseline_loop_function = function(file_path) {
 
 ```
 
-We will now loop over the files in the 2019 folder, filter out any vessels which received WRAS alerts in this time. 
+We will now loop over the files in the 2019 folder, filter out any vessels which received WRAS alerts in this time.
 
 ```{r}
 baseline_data = purrr::map(baseline_files, baseline_loop_function) %>%
-  purrr::reduce(dplyr::full_join) %>% 
+  purrr::reduce(dplyr::full_join, by = c("date", "mmsi", "name", "type", "length", "beam", "sog", "cog", "heading", "latitude", "longitude")) %>% 
   dplyr::filter(lubridate::year(date) != 2018) %>% 
-  # dplyr::filter(sog > 7 & sog < 40.2)
-  # dplyr::filter(sog < 40.2)
-  dplyr::filter(sog > 0.2 & sog < 40.2)
+  dplyr::filter(sog > 7 & sog < 40)
 
-median_baseline_filtered = baseline_data %>% 
-  dplyr::filter(sog > 7) %>% 
-  dplyr::group_by(type) %>% 
-  dplyr::summarise(median = median(sog))
-
-median_baseline_non_filtered = baseline_data %>% 
-  dplyr::group_by(type) %>% 
-  dplyr::summarise(median = median(sog))
-
-
-baseline_plots_no_lower = baseline_data %>% 
-  dplyr::filter(sog > 7) %>% 
-  dplyr::left_join(median_baseline_filtered, by = "type") %>% 
-  dplyr::group_by(type) %>%  
-  ggplot2::ggplot(ggplot2::aes(x = sog)) +
-  ggplot2::geom_histogram(binwidth = 1) +
-  ggplot2::geom_vline(ggplot2::aes(xintercept = median), color = "red", linetype = "dashed") +
-  ggplot2::facet_wrap(~type, scales = "free") +
-  ggplot2::labs(x = "SOG", y = "Frequency") +
-  ggplot2::theme_minimal()
-
-baseline_plots_lower = baseline_data %>% 
-  dplyr::left_join(median_baseline_non_filtered, by = "type") %>% 
-  dplyr::group_by(type) %>%  
-  ggplot2::ggplot(ggplot2::aes(x = sog)) +
-  ggplot2::geom_histogram(binwidth = 1) +
-  ggplot2::geom_vline(ggplot2::aes(xintercept = median), color = "red", linetype = "dashed") +
-  ggplot2::facet_wrap(~type, scales = "free") +
-  ggplot2::labs(x = "SOG", y = "Frequency") +
-  ggplot2::theme_minimal()
-
-ggpubr::ggarrange(baseline_plots_no_lower, baseline_plots_lower,
-                  labels = c("filtered", "non-filtered"),
-                  nrow = 2)
 
 
 
 ```
 
+## Final Processing from leanings in the "Explore" section
+
+1.  Filter data speed to reflect realistic expectations of vessel traffic speed, as well as to speeds at which vessels would potentially take action on an alert (7 - 40 knots).
+2.  Remove any category of vessel with \< 100 record to create a large sample size.
+
+```{r}
+
+clean_wras_ais_filtered = matched_wras_ais %>%
+  dplyr::filter(sog > 7 & sog < 40) %>%
+  dplyr::mutate(type = dplyr::case_when(stringr::str_detect(type, "Tanker") ~ "Tanker",
+                                        stringr::str_detect(type, "Cargo ship") ~ "Cargo ship",
+                                        stringr::str_detect(type, "Other") ~ "Other",
+                                        TRUE ~ type))
+
+data_count = clean_wras_ais_filtered %>% 
+  dplyr::group_by(type) %>% 
+  dplyr::summarise(count = dplyr::n_distinct(alert_sent))
+
+## We have "search and rescue" in the list of vessel types to include in the analysis, I think these should likely be discarded as they don't often have set routes or speeds. 
+
+
+vessel_type_filter = data_count %>% dplyr::filter(count > 100 & type != "Search/rescue") %>% .$type
+
+for_analysis = clean_wras_ais_filtered %>% 
+  dplyr::filter(type %in% vessel_type_filter)
+
+
+
+
+```
+
+# Analyses
+
+## Speed
+
+```{r}
+
+
+median_baseline = baseline_data %>%
+  dplyr::group_by(type) %>%
+  dplyr::summarise(median_baseline = median(sog))
+
+median_wras_data = for_analysis %>%
+  dplyr::group_by(type) %>%
+  dplyr::summarise(median_test = median(sog))
+
+for_analysis %>%
+  dplyr::group_by(type) %>%
+  ggplot2::ggplot(ggplot2::aes(x = sog)) +
+  ggplot2::geom_histogram(binwidth = 1) +
+  ggplot2::facet_wrap(~type, scales = "free") +
+  ggplot2::labs(x = "SOG", y = "Frequency") +
+  ggplot2::theme_minimal()
+
+wras_vs_baseline = for_analysis %>% 
+  dplyr::left_join(median_baseline, by = "type") %>% 
+  dplyr::left_join(median_wras_data, by = "type") %>% 
+  dplyr::group_by(type) %>%  
+  ggplot2::ggplot(ggplot2::aes(x = sog)) +
+  ggplot2::geom_histogram(binwidth = 1) +
+  ggplot2::geom_vline(ggplot2::aes(xintercept = median_baseline), color = "red", linetype = "dashed") +
+  ggplot2::geom_vline(ggplot2::aes(xintercept = median_test), color = "darkgrey", linetype = "dashed") +
+  ggplot2::facet_wrap(~type, scales = "free") +
+  ggplot2::labs(x = "SOG", y = "Frequency") +
+  ggplot2::theme_minimal()
+
+baseline_vs_wras = baseline_data %>% 
+  dplyr::left_join(median_baseline, by = "type") %>% 
+  dplyr::left_join(median_wras_data, by = "type") %>% 
+  dplyr::group_by(type) %>%  
+  ggplot2::ggplot(ggplot2::aes(x = sog)) +
+  ggplot2::geom_histogram(binwidth = 1) +
+  ggplot2::geom_vline(ggplot2::aes(xintercept = median_baseline), color = "red", linetype = "dashed") +
+  ggplot2::geom_vline(ggplot2::aes(xintercept = median_test), color = "darkgrey", linetype = "dashed") +
+  ggplot2::facet_wrap(~type, scales = "free") +
+  ggplot2::labs(x = "SOG", y = "Frequency") +
+  ggplot2::theme_minimal()
+
+baseline_vs_wras
+
+```
+
+### Results from the general speed change scenario
+
+-   From a high level view of the data, there is actually an increase in speed shown in all three groups. This likely comes from a smaller sample size, and perhaps other factors.
+
+#### What am I thinking about?
+
+-   Picking specific ferry routes or cargo ship routes
+
+    -   where are there slowdowns?
+
+    -   What speed, on average, are vessels travelling anyway in the region?
+
+        -   whats the distribution of speed?
+
+        -   maybe overall there is no change, but on the macro scale there is...
+
+    -   What area does the baseline data cover? I should probably try and re-baseline to only take vessels from the same area. Coastline is complex, it might be that WRAS alerts are received in less remote, faster water areas... I have AIS for remote and perhaps more precarious areas.
+
+\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
 
 # Exploration
 
@@ -398,44 +492,44 @@ I want to see how SOG is distributed through out our data, and if there are any 
 
 ```{r}
 
-sog_explore = matched_wras_ais %>% 
-  ggplot2::ggplot(data = .) +
-  ggplot2::geom_histogram(mapping = ggplot2::aes(x = sog), binwidth = 0.2)
-
-sog_explore
+# sog_explore = matched_wras_ais %>% 
+#   ggplot2::ggplot(data = .) +
+#   ggplot2::geom_histogram(mapping = ggplot2::aes(x = sog), binwidth = 0.2)
+# 
+# sog_explore
 
 ```
 
 Spike at \< 5knots, and some additional noise over 25 knots. I want to know more about the distribution in these areas, what vessels are travelling at such low speeds and plot out where these low speeds tend to be (I have a feeling it will be in port), and then what vessels are travelling at high speeds (I think these could be enforcement or anomaly but lets test).
 
 ```{r}
-high_speed = matched_wras_ais %>% 
-  ggplot2::ggplot() +
-  ggplot2::geom_histogram(mapping = ggplot2::aes(x = sog), binwidth = 0.1) +
-  ggplot2::coord_cartesian(xlim = c(26, 110))
-
-high_speed
-
-high_speed_data = matched_wras_ais %>% 
-  dplyr::filter(sog > 25) %>% 
-  dplyr::select(c(name, mmsi, type, sog, status))
+# high_speed = matched_wras_ais %>% 
+#   ggplot2::ggplot() +
+#   ggplot2::geom_histogram(mapping = ggplot2::aes(x = sog), binwidth = 0.1) +
+#   ggplot2::coord_cartesian(xlim = c(26, 110))
+# 
+# high_speed
+# 
+# high_speed_data = matched_wras_ais %>% 
+#   dplyr::filter(sog > 25) %>% 
+#   dplyr::select(c(name, mmsi, type, sog, status))
 ```
 
 The high speed craft generally travel at \<\~40 knots, although there is one case of the speed tipping into 40.3 knots. Anything above this is errors and states that vessel traveled in excess of 100 knots. This can be removed.
 
 ```{r}
-low_speed = matched_wras_ais %>%
-  ggplot2::ggplot(.) + 
-  ggplot2::geom_histogram(mapping = ggplot2::aes(x = sog), binwidth = 0.1) +
-  ggplot2::coord_cartesian(xlim = c(0, 10))
-
-low_speed
-
-low_speed_data = matched_wras_ais %>%
-  dplyr::group_by(alert_sent) %>% 
-  dplyr::filter(any(sog <= 0.2)) %>% ## This tests if this value appears in a group (any) and filters it out. Example below of how it works.
-  dplyr::select(local_time, alert_sent, name, mmsi, skipper, type, sog, status, latitude.x, longitude.x) %>% 
-  dplyr::arrange(alert_sent)
+# low_speed = matched_wras_ais %>%
+#   ggplot2::ggplot(.) + 
+#   ggplot2::geom_histogram(mapping = ggplot2::aes(x = sog), binwidth = 0.1) +
+#   ggplot2::coord_cartesian(xlim = c(0, 10))
+# 
+# low_speed
+# 
+# low_speed_data = matched_wras_ais %>%
+#   dplyr::group_by(alert_sent) %>% 
+#   dplyr::filter(any(sog <= 0.2)) %>% ## This tests if this value appears in a group (any) and filters it out. Example below of how it works.
+#   dplyr::select(local_time, alert_sent, name, mmsi, skipper, type, sog, status, latitude.x, longitude.x) %>% 
+#   dplyr::arrange(alert_sent)
 
 ```
 
@@ -443,113 +537,315 @@ Large cluster approaching 0. Why? I imagine that the majority of these will be w
 
 ```{r}
 
-low_speed_map = matched_wras_ais %>% 
-  dplyr::filter(sog < 0.2)  
+# low_speed_map = matched_wras_ais %>% 
+#   dplyr::filter(sog < 0.2)  
+# 
+# leaflet::leaflet(data = low_speed_map, options = leaflet::leafletOptions(preferCanvas = TRUE)) %>% 
+#   leaflet::addProviderTiles(leaflet::providers$OpenStreetMap, options = leaflet::providerTileOptions(
+#   updateWhenZooming = FALSE,      # map won't update tiles until zoom is done
+#   updateWhenIdle = TRUE           # map won't load new tiles when panning
+#   )) %>% 
+#   leaflet::addMarkers(lng = ~longitude.x, lat = ~latitude.x,
+#                             popup = ~(paste(name, type)),
+#                             clusterOptions = leaflet::markerClusterOptions())
+# 
+# leaflet::leaflet(data = low_speed_map, options = leaflet::leafletOptions(preferCanvas = TRUE)) %>% 
+#   leaflet::addTiles(options = leaflet::tileOptions(updateWhenZooming = FALSE,
+#                                                          updateWhenIdle = TRUE)) %>% 
+#   leaflet::addMarkers(lng = ~longitude.x, lat = ~latitude.x)
 
-leaflet::leaflet(data = low_speed_map) %>% 
-  leaflet::addTiles() %>% 
-  leaflet::addCircleMarkers(lng = ~longitude.x, lat = ~latitude.x,
-                            popup = ~(paste(name, type)))  
-  
 
 ```
 
-Filtering the speed down to \<0.2 knots shows that ships at these speeds are broadly always in or very close to port. Although not outliars in the study, these ships won't slow down due to being slowed down already + in port so I think I should remove them from the analysis.
+Vessels travelling already at around 7-10knots will (or even probably slightly faster) will not slow down for whales unless absolutely necessary. Personal experience and anecdotal evidence suggests that it does happen, particularly closer to port, but it isn't likely. I suggest filtering data \<= 10knots and \> 40 knots.
 
-Filter out all of the data under 0.2 knots + over 40.2 knots. Group by class and calculate difference to median for speed of vessels. The only issue with filtering out data under 0.2 knots and 40.2 knots might give me a skewed amount of data points before and after the alert was sent, although, looking at the AIS data it seems like that was already the case...
+Filter out all of the data under 0.2 knots + over 40.2 knots. Group by class and calculate difference to median for speed of vessels.
 
 ```{r}
 
-clean_wras_ais_filtered = matched_wras_ais %>%
-  dplyr::filter(sog > 7 & sog < 40.2) %>% 
-  dplyr::mutate(type = dplyr::case_when(stringr::str_detect(type, "Tanker") ~ "Tanker",
-                                        stringr::str_detect(type, "Cargo ship") ~ "Cargo ship",
-                                        stringr::str_detect(type, "Other") ~ "Other",
-                                        TRUE ~ type))
+# clean_wras_ais_filtered = matched_wras_ais %>%
+#   dplyr::filter(sog > 10 & sog < 40) %>%
+#   dplyr::mutate(type = dplyr::case_when(stringr::str_detect(type, "Tanker") ~ "Tanker",
+#                                         stringr::str_detect(type, "Cargo ship") ~ "Cargo ship",
+#                                         stringr::str_detect(type, "Other") ~ "Other",
+#                                         TRUE ~ type))
 
-clean_wras_ais_non_filtered = matched_wras_ais %>%
-  dplyr::filter(sog < 40.2) %>% 
-  dplyr::mutate(type = dplyr::case_when(stringr::str_detect(type, "Tanker") ~ "Tanker",
-                                        stringr::str_detect(type, "Cargo ship") ~ "Cargo ship",
-                                        stringr::str_detect(type, "Other") ~ "Other",
-                                        TRUE ~ type))
+# clean_wras_ais_non_filtered = matched_wras_ais %>%
+#   dplyr::filter(sog < 40.2) %>% 
+#   dplyr::mutate(type = dplyr::case_when(stringr::str_detect(type, "Tanker") ~ "Tanker",
+#                                         stringr::str_detect(type, "Cargo ship") ~ "Cargo ship",
+#                                         stringr::str_detect(type, "Other") ~ "Other",
+#                                         TRUE ~ type))
 
 ```
 
 Is there some groups that just don't need to be included as they are so small?
 
+data_count = clean_wras_ais_filtered %\>%
+
+dplyr::group_by(type) %\>%
+
+dplyr::summarise(count = dplyr::n_distinct(alert_sent))
+
 ```{r}
-data_count = clean_wras_ais_filtered %>% 
-  dplyr::group_by(type) %>% 
-  dplyr::summarise(count = dplyr::n_distinct(alert_sent))
+# data_count = clean_wras_ais_filtered %>% 
+#   dplyr::group_by(type) %>% 
+#   dplyr::summarise(count = dplyr::n_distinct(alert_sent))
 
 ```
 
 Filter out everything which is under 100 sample size, leaving us with..
 
 ```{r}
-vessel_type_filter = data_count %>% dplyr::filter(count > 100) %>% .$type
-vessel_type_filter
+# vessel_type_filter = data_count %>% dplyr::filter(count > 100) %>% .$type
+# vessel_type_filter
 ```
 
 Left with "Passenger Ship", "HSC" (high speed craft), and "Cargo ship", totaling 3394 alerts.
 
 #### Takeaways
 
--   We need to filter the data by vessels \> 0.2 knots and \< 40 knots
+-   We need to filter the data by vessels \> 7 knots and \< 40 knots
 
 -   We will filter the groups of vessel types which have over 100 records, this includes HSC, Passenger ships, and Cargo Ships
 
-# Analyses
+## Streamlining baseline data area
 
-## Speed
+-   I want to see where vessels are travelling when they recieved alerts, do patters (dependant of vessel type) emerge, can I use those to fine tune the study?
 
 ```{r}
+# baseline_data %>%
+#   dplyr::group_by(date, mmsi) %>% 
+#   dplyr::summarise(latitude = mean(latitude), longitude = mean(longitude)) %>% 
+#   sf::st_as_sf(coords = c("longitude", "latitude")) %>%
+#   leaflet::leaflet() %>% 
+#   leaflet::addTiles() %>% 
+#   leaflet::addCircleMarkers(radius = 0.5) %>% 
+#   leaflet::addCircleMarkers(data = for_analysis, 
+#                              lat = for_analysis$latitude.x,
+#                              lng = for_analysis$longitude.x,
+#                              radius = 0.5, col = "red")
 
-median_value_filtered = clean_wras_ais_filtered %>%
-  dplyr::filter(type %in% vessel_type_filter) %>%
-  dplyr::group_by(type) %>%
-  dplyr::summarise(median_test = median(sog))
-
-median_value_non_filtered = clean_wras_ais_non_filtered %>%
-  dplyr::filter(type %in% vessel_type_filter) %>%
-  dplyr::group_by(type) %>%
-  dplyr::summarise(median_test = median(sog))
-
-
-wras_filtered = clean_wras_ais_filtered %>% 
-  dplyr::filter(type %in% vessel_type_filter) %>%
-  dplyr::filter(sog > 7) %>% 
-  dplyr::left_join(median_baseline_filtered, by = "type") %>% 
-  dplyr::left_join(median_value_filtered, by = "type") %>% 
-  dplyr::group_by(type) %>%  
-  ggplot2::ggplot(ggplot2::aes(x = sog)) +
-  ggplot2::geom_histogram(binwidth = 1) +
-  ggplot2::geom_vline(ggplot2::aes(xintercept = median), color = "red", linetype = "dashed") +
-  ggplot2::geom_vline(ggplot2::aes(xintercept = median_test), color = "darkgrey", linetype = "dashed") +
-  ggplot2::facet_wrap(~type, scales = "free") +
-  ggplot2::labs(x = "SOG", y = "Frequency") +
-  ggplot2::theme_minimal()
-
-wras_non_filtered = clean_wras_ais_non_filtered %>% 
-  dplyr::filter(type %in% vessel_type_filter) %>%
-  dplyr::left_join(median_baseline_non_filtered, by = "type") %>% 
-  dplyr::left_join(median_value_non_filtered, by = "type") %>% 
-  dplyr::group_by(type) %>%  
-  ggplot2::ggplot(ggplot2::aes(x = sog)) +
-  ggplot2::geom_histogram(binwidth = 1) +
-  ggplot2::geom_vline(ggplot2::aes(xintercept = median), color = "red", linetype = "dashed") +
-  ggplot2::geom_vline(ggplot2::aes(xintercept = median_test), color = "darkgrey", linetype = "dashed") +
-  ggplot2::facet_wrap(~type, scales = "free") +
-  ggplot2::labs(x = "SOG", y = "Frequency") +
-  ggplot2::theme_minimal()
-
-
-# Create histograms for each group with adjusted axes
-ggpubr::ggarrange(wras_filtered, wras_non_filtered,
-                  labels = c("filtered", "non-filtered"),
-                  nrow = 2)
 
 ```
 
-#### 
+-   The above shows that the baseline data has a much wider extent than the analysis data. I need to take area out as a variable in the speed study. In order to do this I will set an area for the study with a custom polygon and look within this range instead.
+    -   For now I am just using the Salish Sea (ish) as a polygon, but I will expand this to be Seattle...
+
+```{r}
+# data_filter_shp = sf::st_read("../../../../Ocean Wise Conservation Association/Project - WRAS - Efficacy/Resources/efficacy-area-filter.shp") %>% 
+#   sf::st_set_crs(4326)
+
+data_filter_shp = sf::st_read("../../../../Ocean Wise Conservation Association/Project - WRAS - Efficacy/Resources/efficacy-area-filter-extended.shp") %>% 
+  sf::st_set_crs(4326) 
+
+
+# baseline_data %>%
+#   dplyr::group_by(date, mmsi) %>% 
+#   dplyr::summarise(latitude = mean(latitude), longitude = mean(longitude)) %>% 
+#   sf::st_as_sf(coords = c("longitude", "latitude")) %>%
+#   leaflet::leaflet() %>% 
+#   leaflet::addTiles() %>% 
+#   leaflet::addCircleMarkers(radius = 0.5) %>% 
+#   leaflet::addPolygons(data = data_filter_shp)
+
+
+## Define chunk size 
+chunk_size <- 10000
+
+# Split your data into chunks
+num_chunks = ceiling(nrow(baseline_data) / chunk_size)
+chunks <- split(baseline_data, rep(1:num_chunks, each = chunk_size, length.out = nrow(baseline_data)))
+
+## Define a function for spatial join
+perform_spatial_join <- function(chunk) {
+  
+  chunk_sf <- sf::st_as_sf(chunk, coords = c("longitude", "latitude"), crs = sf::st_crs(data_filter_shp))
+  
+  ## Spatial join using chunk's spatial index
+  # joined_data <- sf::st_join(chunk_sf, data_filter_shp, join = sf::st_within) # left = FALSE, right = FALSE, use_sindex = TRUE)
+  joined_data = chunk_sf%>% 
+    dplyr::mutate(intersection = as.integer(sf::st_intersects(geometry, data_filter_shp))) %>% 
+    dplyr::filter(is.na(intersection)==F)
+  
+  return(joined_data)
+}
+
+filtered_baseline_data = purrr::map(chunks, perform_spatial_join) %>%
+  dplyr::bind_rows()
+
+filtered_analysis_data = sf::st_as_sf(for_analysis, 
+                                      coords = c("longitude.y", "latitude.y"), 
+                                      crs = sf::st_crs(data_filter_shp)) %>% 
+  dplyr::mutate(intersection = as.integer(sf::st_intersects(geometry, data_filter_shp))) %>% 
+  dplyr::filter(is.na(intersection)==F)
+
+# filtered_baseline_data %>%
+#   leaflet::leaflet() %>%
+#   leaflet::addTiles() %>%
+#   leaflet::addCircleMarkers(radius = 0.5) %>%
+#   leaflet::addCircleMarkers(data = filtered_analysis_data, radius = 0.5, col = "red")
+
+```
+
+-   Now i've matched the WRAS data and the baseline data, I can repeat my speed analysis and see if there is a difference.
+    -   WRAS data is around 50% reduced, baseline data is around 83% reduced
+
+```{r}
+
+median_filtered_wras_data = filtered_analysis_data %>% 
+  dplyr::group_by(type) %>% 
+  dplyr::summarise(median_test = median(sog)) %>% 
+  sf::st_drop_geometry()
+
+median_filtered_baseline_data = filtered_baseline_data %>% 
+  dplyr::filter(type %in% median_filtered_wras_data$type) %>% 
+  dplyr::group_by(type) %>% 
+  dplyr::summarise(median_baseline = median(sog)) %>%
+  sf::st_drop_geometry()
+
+baseline_vs_wras = filtered_baseline_data %>% 
+  dplyr::filter(type %in% median_filtered_wras_data$type) %>% 
+  dplyr::left_join(median_filtered_baseline_data, by = "type") %>% 
+  dplyr::left_join(median_filtered_wras_data, by = "type") %>% 
+  dplyr::group_by(type) %>%
+  ggplot2::ggplot(ggplot2::aes(x = sog)) + 
+  ggplot2::geom_histogram(binwidth = 1) + 
+  ggplot2::facet_wrap(~type, scales = "free") +
+  ggplot2::geom_vline(ggplot2::aes(xintercept = median_baseline), color = "red", linetype = "dashed") + 
+  ggplot2::geom_vline(ggplot2::aes(xintercept = median_test), color = "darkgrey", linetype = "solid") + 
+  ggplot2::labs(x = "SOG", y = "Frequency") + 
+  ggplot2::theme_minimal()
+
+baseline_vs_wras
+
+
+```
+
+## Types of vessels...
+
+-   I've noticed that in the AIS data there are many sub-categories of vessels found within "Passenger ship", predominantly small eco-tourism vessels. These vessels aren't covered under WRAS access, so in order to match the baseline data to vessels within WRAS I will have to come up with a way of filtering out these vessels from the baseline data.
+
+-   My first thought is to look at length to see if there is something I can do there...
+
+    -   I will make plots of the distribution of length from baseline data and WRAS data and see what comes out.
+
+```{r}
+library(patchwork)  
+
+baseline_plot = filtered_baseline_data %>% 
+  dplyr::filter(type %in% unique(filtered_analysis_data$type)) %>% 
+  ggplot2::ggplot(data = ., ggplot2::aes(x = type, y = length, fill = type)) +   
+  ggplot2::geom_boxplot(show.legend = F) +   
+  ggplot2::theme_minimal() +
+  ggplot2::coord_cartesian(ylim = c(0, 520)) +
+  ggplot2::ggtitle("Baseline")
+
+analysis_plot = filtered_analysis_data %>%    
+  ggplot2::ggplot(data = ., ggplot2::aes(x = type, y = length, fill = type)) +   
+  ggplot2::geom_boxplot(show.legend = F) +   
+  ggplot2::theme_minimal() +
+  ggplot2::coord_cartesian(ylim = c(0, 520)) + 
+  ggplot2::ggtitle("WRAS")
+
+combined_plots = baseline_plot + analysis_plot
+
+combined_plots
+```
+
+## 
+
+-   Looking at the above plot we can see that the distribution of lengths for cargo and passenger ships is different between the baseline and the analysis data. This suggests a difference in vessel types within these broad categories which could mean a difference in speeds. To check this I'll look at a scatter plot.
+
+    -   I'm more focused on the passenger vessels rather than the cargo ships. If I remove outliers and match the min vessel length for the baseline to the min length of the WRAS data we will have a pretty good standardization for this group.
+
+    -   Passenger vessels is a bit trickier in my opinion so I will try to better understand the data before filtering.
+
+-   To dos...
+
+    -   [x] Compare distribution of speed vs length
+
+    -   [ ] Clean the cargo ship data to remove outliers and smaller vessels than the min of the test group.
+
+    -   [ ] Clean passenger category - smaller vessels to be removed (based on scatter plot)
+
+    -   [ ] re run analysis
+
+```{r}
+
+filtered_baseline_data %>% 
+  dplyr::filter(type %in% unique(filtered_analysis_data$type)) %>% 
+  dplyr::group_by(type) %>% 
+  ggpubr::ggscatter(., x = "sog", y = "length", col = "type")
+  
+
+  
+```
+
+-   Looks like my prediction was correct. In Passenger vessels, smaller vessels travel faster than larger vessels.
+
+    -   I should filter this passenger data down to match the analysis data.
+
+-   I'm going to run a quick plot of the WRAS dataset to see the differences...
+
+```{r}
+filtered_analysis_data %>% 
+  dplyr::filter(type %in% unique(filtered_analysis_data$type)) %>% 
+  dplyr::group_by(type) %>% 
+  ggpubr::ggscatter(., x = "sog", y = "length", col = "type")
+```
+
+# Sandbox
+
+### Baseline Data
+
+```{r eval=FALSE}
+  # dplyr::filter(sog < 40.2)
+  # dplyr::filter(sog > 0.2 & sog < 40.2)
+
+# median_baseline_filtered = baseline_data %>% 
+#   # dplyr::filter(sog > 7) %>% 
+#   dplyr::group_by(type) %>% 
+#   dplyr::summarise(median = median(sog))
+# 
+# median_baseline_non_filtered = baseline_data %>% 
+#   dplyr::group_by(type) %>% 
+#   dplyr::summarise(median = median(sog))
+# 
+# 
+# baseline_plots_no_lower = baseline_data %>% 
+#   dplyr::filter(sog > 7) %>% 
+#   dplyr::left_join(median_baseline_filtered, by = "type") %>% 
+#   dplyr::group_by(type) %>%  
+#   ggplot2::ggplot(ggplot2::aes(x = sog)) +
+#   ggplot2::geom_histogram(binwidth = 1) +
+#   ggplot2::geom_vline(ggplot2::aes(xintercept = median), color = "red", linetype = "dashed") +
+#   ggplot2::facet_wrap(~type, scales = "free") +
+#   ggplot2::labs(x = "SOG", y = "Frequency") +
+#   ggplot2::theme_minimal()
+# 
+# baseline_plots_lower = baseline_data %>% 
+#   dplyr::left_join(median_baseline_non_filtered, by = "type") %>% 
+#   dplyr::group_by(type) %>%  
+#   ggplot2::ggplot(ggplot2::aes(x = sog)) +
+#   ggplot2::geom_histogram(binwidth = 1) +
+#   ggplot2::geom_vline(ggplot2::aes(xintercept = median), color = "red", linetype = "dashed") +
+#   ggplot2::facet_wrap(~type, scales = "free") +
+#   ggplot2::labs(x = "SOG", y = "Frequency") +
+#   ggplot2::theme_minimal()
+# 
+# ggpubr::ggarrange(baseline_plots_no_lower, baseline_plots_lower,
+#                   labels = c("filtered", "non-filtered"),
+#                   nrow = 2)
+
+
+x = median_filtered_baseline_data %>% 
+  dplyr::filter(type == "Passenger ship", sog >= 23.5) 
+
+y = matched_wras_ais %>% 
+  dplyr::filter(type == "Passenger ship")
+
+min(y$length)
+max(y$length)
+
+```
