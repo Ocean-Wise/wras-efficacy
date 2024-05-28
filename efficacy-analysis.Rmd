@@ -354,6 +354,7 @@ baseline_loop_function = function(file_path) {
                   date = lubridate::date(local_time)) %>% 
     dplyr::select(c("date", "mmsi", "name", "type", "length", "beam", "sog", "cog", "heading", "latitude", "longitude"))
 
+  ## This removes vessels that have recieved alerts...
   remove_alerts = baseline_data %>% 
     dplyr::anti_join(WRAS_data_cleaned, by = c("date", "mmsi")) %>%
     dplyr::mutate(type = dplyr::case_when(stringr::str_detect(type, "Tanker") ~ "Tanker",
@@ -680,12 +681,14 @@ filtered_analysis_data = sf::st_as_sf(for_analysis,
   dplyr::mutate(intersection = as.integer(sf::st_intersects(geometry, data_filter_shp))) %>% 
   dplyr::filter(is.na(intersection)==F)
 
-# filtered_baseline_data %>%
-#   leaflet::leaflet() %>%
-#   leaflet::addTiles() %>%
-#   leaflet::addCircleMarkers(radius = 0.5) %>%
-#   leaflet::addCircleMarkers(data = filtered_analysis_data, radius = 0.5, col = "red")
+filtered_baseline_data %>%
+  leaflet::leaflet() %>%
+  leaflet::addTiles() %>%
+  leaflet::addCircleMarkers(radius = 0.5) %>%
+  leaflet::addCircleMarkers(data = filtered_analysis_data, radius = 0.5, col = "red")
 
+
+ 
 ```
 
 -   Now i've matched the WRAS data and the baseline data, I can repeat my speed analysis and see if there is a difference.
@@ -704,13 +707,14 @@ median_filtered_baseline_data = filtered_baseline_data %>%
   dplyr::summarise(median_baseline = median(sog)) %>%
   sf::st_drop_geometry()
 
-baseline_vs_wras = filtered_baseline_data %>% 
+baseline_vs_wras = filtered_analysis_data %>% 
   dplyr::filter(type %in% median_filtered_wras_data$type) %>% 
   dplyr::left_join(median_filtered_baseline_data, by = "type") %>% 
   dplyr::left_join(median_filtered_wras_data, by = "type") %>% 
   dplyr::group_by(type) %>%
   ggplot2::ggplot(ggplot2::aes(x = sog)) + 
   ggplot2::geom_histogram(binwidth = 1) + 
+  # ggplot2::geom_histogram(data = filtered_analysis_data, binwidth = 1, color = "purple") +
   ggplot2::facet_wrap(~type, scales = "free") +
   ggplot2::geom_vline(ggplot2::aes(xintercept = median_baseline), color = "red", linetype = "dashed") + 
   ggplot2::geom_vline(ggplot2::aes(xintercept = median_test), color = "darkgrey", linetype = "solid") + 
@@ -761,16 +765,6 @@ combined_plots
 
     -   Passenger vessels is a bit trickier in my opinion so I will try to better understand the data before filtering.
 
--   To dos...
-
-    -   [x] Compare distribution of speed vs length
-
-    -   [ ] Clean the cargo ship data to remove outliers and smaller vessels than the min of the test group.
-
-    -   [ ] Clean passenger category - smaller vessels to be removed (based on scatter plot)
-
-    -   [ ] re run analysis
-
 ```{r}
 
 filtered_baseline_data %>% 
@@ -794,6 +788,66 @@ filtered_analysis_data %>%
   dplyr::group_by(type) %>% 
   ggpubr::ggscatter(., x = "sog", y = "length", col = "type")
 ```
+
+-   We can see by the above scatter plots that there is a distinct weighting of baseline data towards smaller, faster vessels for passenger type vessels (and to a lesser extent but still present in cargo vessels).
+
+-   I am removing outliers via the **interquartile range method**
+
+-   To dos...
+
+    -   [x] Compare distribution of speed vs length
+
+    -   [x] Clean the cargo ship data to remove outliers and smaller vessels than the min of the test group.
+
+    -   [x] Clean passenger category - smaller vessels to be removed (based on scatter plot)
+
+    -   [x] re run analysis
+
+### Removing outliers and filtering baseline data
+
+```{r}
+
+## Remove outliers 
+clean_analysis_data = filtered_analysis_data %>% 
+  dplyr::filter(length < 230 & length > 70 & type == "Passenger ship" | type == "Cargo ship")
+
+## Set the limits of the baseline data to the analysis data 
+clean_baseline_data = filtered_baseline_data %>% 
+  dplyr::filter(length <= max(clean_analysis_data$length) &
+                  length >= min(clean_analysis_data$length),
+                type %in% clean_analysis_data$type)
+  
+median_filtered_wras_data = clean_analysis_data %>% 
+  dplyr::group_by(type) %>% 
+  dplyr::summarise(median_test = median(sog)) %>% 
+  sf::st_drop_geometry()
+
+median_filtered_baseline_data = clean_baseline_data %>% 
+  dplyr::filter(type %in% median_filtered_wras_data$type) %>% 
+  dplyr::group_by(type) %>% 
+  dplyr::summarise(median_baseline = median(sog)) %>%
+  sf::st_drop_geometry()
+
+baseline_vs_wras = clean_analysis_data %>% 
+  dplyr::filter(type %in% median_filtered_wras_data$type) %>% 
+  dplyr::left_join(median_filtered_baseline_data, by = "type") %>% 
+  dplyr::left_join(median_filtered_wras_data, by = "type") %>% 
+  dplyr::group_by(type) %>%
+  ggplot2::ggplot(ggplot2::aes(x = sog)) + 
+  ggplot2::geom_histogram(binwidth = 1) + 
+  ggplot2::facet_wrap(~type, scales = "free") +
+  ggplot2::geom_vline(ggplot2::aes(xintercept = median_baseline), color = "darkgrey", linetype = "solid") + 
+  ggplot2::geom_vline(ggplot2::aes(xintercept = median_test), color = "red", linetype = "dashed") + 
+  ggplot2::labs(x = "SOG", y = "Frequency") + 
+  ggplot2::theme_minimal()
+
+```
+
+-   Not that I am hunting for answers, but I would like to see whether there is another factor impacting the vessel speed for the passenger vessels.
+
+    -   is the WRAS data including High Speed Ferries in here when the Baseline is not?
+
+    -   Is there a major difference in routes that are being compared with the WRAS and Baseline?
 
 # Sandbox
 
@@ -839,13 +893,18 @@ filtered_analysis_data %>%
 #                   nrow = 2)
 
 
-x = median_filtered_baseline_data %>% 
-  dplyr::filter(type == "Passenger ship", sog >= 23.5) 
+clean_baseline_data %>%
+  leaflet::leaflet() %>%
+  leaflet::addTiles() %>%
+  leaflet::addCircleMarkers(radius = 0.5) %>%
+  leaflet::addCircleMarkers(data = clean_analysis_data, radius = 0.5, col = "red")
 
-y = matched_wras_ais %>% 
-  dplyr::filter(type == "Passenger ship")
 
-min(y$length)
-max(y$length)
+
+for_analysis %>% 
+  leaflet::leaflet() %>% 
+  leaflet::addTiles() %>% 
+  leaflet::addCircleMarkers(data = for_analysis, lat = ~latitude.x, lng = ~longitude.x, radius = 0.5, col = "purple") %>% 
+  leaflet::addPolygons(data = data_filter_shp$geometry)
 
 ```
